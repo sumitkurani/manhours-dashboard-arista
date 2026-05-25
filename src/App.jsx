@@ -5,7 +5,7 @@ import { useState, useMemo, useCallback, useEffect } from "react";
 import logo from "./assets/logo.png";
 const DEPARTMENTS = [
   "Management", "Design & Retouch", "Digital Marketing", "Development", "Operations",
-  "Logistics", "Reconciliation", "Web Operations", "Shopify", "Amazon", "Front End Development", "SEO", "AI", "Other"
+  "Logistics", "Reconciliation", "Web Operations", "Shopify", "Amazon", "Front End Development", "SEO", "AI","Chargeback", "Web Product", "Reporting", "Other"
 ];
 
 const ATTENDANCE_TYPES = {
