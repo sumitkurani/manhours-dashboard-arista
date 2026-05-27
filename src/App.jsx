@@ -75,6 +75,7 @@ export default function ManhoursDashboard() {
   const [filterMonth, setFilterMonth] = useState("All");
   const [filterYear, setFilterYear] = useState("All");
   const [invoiceFilter, setInvoiceFilter] = useState("All");
+  const [manhoursFilter, setManhoursFilter] = useState("All");
 
   const [history, setHistory] = useState([]);
   const [future, setFuture] = useState([]);
@@ -181,7 +182,25 @@ const redo = () => {
       (invoiceFilter === "Invoiced" && hasInvoice) ||
       (invoiceFilter === "Not Invoiced" && !hasInvoice);
 
-    return monthYearMatch && invoiceMatch;
+    // 🔹 Manhours status filter — scoped to selected month/year when set,
+    // otherwise checks if manhours are freezed for any month.
+    let hasFreezed;
+    if (filterMonthIdx !== null && filterYearStr !== null) {
+      hasFreezed = !!(p.manhoursFreezed || {})[`${filterYearStr}-${filterMonthIdx}`];
+    } else if (filterMonthIdx !== null) {
+      hasFreezed = Object.entries(p.manhoursFreezed || {}).some(([k, v]) => v && parseInt(k.split("-")[1]) === filterMonthIdx);
+    } else if (filterYearStr !== null) {
+      hasFreezed = Object.entries(p.manhoursFreezed || {}).some(([k, v]) => v && k.split("-")[0] === filterYearStr);
+    } else {
+      hasFreezed = Object.values(p.manhoursFreezed || {}).some(Boolean);
+    }
+
+    const manhoursMatch =
+      manhoursFilter === "All" ||
+      (manhoursFilter === "Completed" && hasFreezed) ||
+      (manhoursFilter === "Not Completed" && !hasFreezed);
+
+    return monthYearMatch && invoiceMatch && manhoursMatch;
   });
 
   // 🔹 Sorting
@@ -190,7 +209,7 @@ const redo = () => {
   }
 
   return filtered;
-}, [projects, sortAlpha, filterMonth, filterYear, invoiceFilter]);
+}, [projects, sortAlpha, filterMonth, filterYear, invoiceFilter, manhoursFilter]);
 
   const addEmployee = () => { if (!newEmpName.trim()) return; setEmployees(prev => [...prev, { id: generateId(), name: newEmpName.trim(), department: newEmpDept }]); setNewEmpName(""); };
   const removeEmployee = (id) => setEmployees(prev => prev.filter(e => e.id !== id));
@@ -220,6 +239,7 @@ const redo = () => {
   const canCreate = () => { if (!projectName.trim()) return false; if (projectType === "retainer") return employees.length > 0; if (hourlyTrackBy === "tasks") return tasks.length > 0; return employees.length > 0; };
 
   const toggleInvoice = (projectId, mk) => { updateProjects(prev => prev.map(p => { if (p.id !== projectId) return p; const inv = { ...(p.invoiced || {}) }; inv[mk] = !inv[mk]; return { ...p, invoiced: inv }; })); };
+  const toggleManhoursFreeze = (projectId, mk) => { updateProjects(prev => prev.map(p => { if (p.id !== projectId) return p; const fr = { ...(p.manhoursFreezed || {}) }; fr[mk] = !fr[mk]; return { ...p, manhoursFreezed: fr }; })); };
 
   const updateAttendance = (empId, day, value) => { const key = `${selectedYear}-${selectedMonth}`; updateProjects(prev => prev.map(p => { if (p.id !== activeProjectId) return p; const data = { ...p.data }; if (!data[key]) data[key] = {}; if (!data[key][empId]) data[key][empId] = {}; data[key][empId][day] = value; return { ...p, data }; })); };
   const updateHours = (itemId, value) => { const key = `${selectedYear}-${selectedMonth}`; updateProjects(prev => prev.map(p => { if (p.id !== activeProjectId) return p; const data = { ...p.data }; if (!data[key]) data[key] = {}; data[key][itemId] = value; return { ...p, data }; })); };
@@ -239,6 +259,17 @@ const redo = () => {
       const data = { ...p.data }; if (!data[key]) data[key] = {};
       const roster = getMonthEmployees(p, key);
       roster.forEach(emp => { if (!data[key][emp.id]) data[key][emp.id] = {}; for (let d = 1; d <= daysInMonth; d++) { if (isWeekend(selectedYear, selectedMonth, d)) data[key][emp.id][d] = "W"; } });
+      return { ...p, data };
+    }));
+  };
+
+  const markWeekdaysPresent = () => {
+    const key = `${selectedYear}-${selectedMonth}`;
+    updateProjects(prev => prev.map(p => {
+      if (p.id !== activeProjectId) return p;
+      const data = { ...p.data }; if (!data[key]) data[key] = {};
+      const roster = getMonthEmployees(p, key);
+      roster.forEach(emp => { if (!data[key][emp.id]) data[key][emp.id] = {}; for (let d = 1; d <= daysInMonth; d++) { if (!isWeekend(selectedYear, selectedMonth, d)) data[key][emp.id][d] = "P"; } });
       return { ...p, data };
     }));
   };
@@ -595,6 +626,17 @@ if (!user) {
   <option value="Not Invoiced">Not Invoiced</option>
 </select>
 
+{/* Manhours Status Filter */}
+<select
+  value={manhoursFilter}
+  onChange={(e) => setManhoursFilter(e.target.value)}
+  style={S.invoiceFilter}
+>
+  <option value="All">All Manhours</option>
+  <option value="Completed">Completed</option>
+  <option value="Not Completed">Not Completed</option>
+</select>
+
 <button
   style={{
     ...S.sortBtn,
@@ -643,6 +685,7 @@ if (!user) {
                   const cardYear = filterYear === "All" ? _now.getFullYear() : parseInt(filterYear);
                   const cmk = `${cardYear}-${cardMonthIdx}`;
                   const isInv = p.invoiced?.[cmk] || false;
+                  const isFreezed = p.manhoursFreezed?.[cmk] || false;
                   const cardMonthLabel = `${MONTHS[cardMonthIdx].slice(0,3)} ${cardYear}`;
                   return (
                     <div key={p.id} style={S.projectCard}>
@@ -661,6 +704,10 @@ if (!user) {
                       <div style={S.invoiceRow} onClick={(e) => { e.stopPropagation(); toggleInvoice(p.id, cmk); }}>
                         <div style={{ ...S.checkbox, ...(isInv ? S.checkboxChecked : {}) }}>{isInv && "\u2713"}</div>
                         <span style={{ fontSize: 12, color: isInv ? "#2d6a4f" : "#999" }}>{isInv ? `Invoice created (${cardMonthLabel})` : `No invoice (${cardMonthLabel})`}</span>
+                      </div>
+                      <div style={S.invoiceRow} onClick={(e) => { e.stopPropagation(); toggleManhoursFreeze(p.id, cmk); }}>
+                        <div style={{ ...S.checkbox, ...(isFreezed ? S.checkboxChecked : {}) }}>{isFreezed && "\u2713"}</div>
+                        <span style={{ fontSize: 12, color: isFreezed ? "#2d6a4f" : "#999" }}>{isFreezed ? `Manhours Completed (${cardMonthLabel})` : `Manhours In Progress (${cardMonthLabel})`}</span>
                       </div>
                       <button style={S.cardBtn} onClick={() => { setActiveProjectId(p.id); setView("data"); }}>Open</button>
                     </div>
@@ -750,6 +797,14 @@ if (!user) {
               </div>
             </div>
 
+            {/* Manhours Freezed checkbox */}
+            <div style={S.invoiceBar}>
+              <div style={S.invoiceBarInner} onClick={() => toggleManhoursFreeze(activeProject.id, monthKey)}>
+                <div style={{ ...S.checkbox, ...S.checkboxLg, ...(activeProject.manhoursFreezed?.[monthKey] ? S.checkboxChecked : {}) }}>{activeProject.manhoursFreezed?.[monthKey] && "\u2713"}</div>
+                <span style={{ fontSize: 14, fontWeight: 500, color: activeProject.manhoursFreezed?.[monthKey] ? "#2d6a4f" : "#666" }}>{activeProject.manhoursFreezed?.[monthKey] ? "Manhours Freezed (Completed)" : "Manhours not freezed (In Progress)"} for {MONTHS[selectedMonth]} {selectedYear}</span>
+              </div>
+            </div>
+
             {/* Summary */}
             {activeProject.type === "retainer" ? (
               <div style={S.summaryRow}>
@@ -817,6 +872,7 @@ if (!user) {
 </button>
 
                 {activeProject.type === "retainer" && <button style={S.quickBtn} onClick={markWeekends}>📅 Mark Weekends Off</button>}
+                {activeProject.type === "retainer" && <button style={S.quickBtn} onClick={markWeekdaysPresent}>✅ Mark Weekdays Present</button>}
                 <button style={S.quickBtn} onClick={copyFromPreviousMonth}>📋 Copy Previous Month</button>
               </div>
             </div>
