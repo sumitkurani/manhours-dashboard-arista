@@ -142,29 +142,46 @@ const redo = () => {
   const displayedProjects = useMemo(() => {
   let filtered = [...projects];
 
-  // 🔹 Month + Year filter
+  // 🔹 Month + Year filter — check actual data presence, not project creation date.
+  // A project shows up if it has data entered for the selected month/year.
   filtered = filtered.filter((p) => {
-    if (!p.createdAt) return true;
+    const dataKeys = Object.keys(p.data || {}); // keys are "YYYY-M" (0-indexed month)
+    const filterMonthIdx = filterMonth === "All" ? null : MONTHS.indexOf(filterMonth);
+    const filterYearStr = filterYear === "All" ? null : filterYear;
 
-    const date = new Date(p.createdAt);
-    const monthName = MONTHS[date.getMonth()];
-    const year = date.getFullYear().toString();
+    let monthYearMatch;
+    if (filterMonthIdx === null && filterYearStr === null) {
+      // No filter applied -> include everything
+      monthYearMatch = true;
+    } else {
+      // Match if any data key satisfies the active filter(s).
+      monthYearMatch = dataKeys.some((k) => {
+        const [y, m] = k.split("-");
+        const monthOk = filterMonthIdx === null || parseInt(m) === filterMonthIdx;
+        const yearOk = filterYearStr === null || y === filterYearStr;
+        return monthOk && yearOk;
+      });
+    }
 
-    const monthMatch =
-     filterMonth === "All" || monthName === filterMonth;
+    // 🔹 Invoice Filter — scoped to the selected month/year when one is set,
+    // otherwise checks if the project was invoiced for any month.
+    let hasInvoice;
+    if (filterMonthIdx !== null && filterYearStr !== null) {
+      hasInvoice = !!(p.invoiced || {})[`${filterYearStr}-${filterMonthIdx}`];
+    } else if (filterMonthIdx !== null) {
+      hasInvoice = Object.entries(p.invoiced || {}).some(([k, v]) => v && parseInt(k.split("-")[1]) === filterMonthIdx);
+    } else if (filterYearStr !== null) {
+      hasInvoice = Object.entries(p.invoiced || {}).some(([k, v]) => v && k.split("-")[0] === filterYearStr);
+    } else {
+      hasInvoice = Object.values(p.invoiced || {}).some(Boolean);
+    }
 
-    const yearMatch =
-     filterYear === "All" || year === filterYear;
+    const invoiceMatch =
+      invoiceFilter === "All" ||
+      (invoiceFilter === "Invoiced" && hasInvoice) ||
+      (invoiceFilter === "Not Invoiced" && !hasInvoice);
 
-// 🔹 Invoice Filter
-const hasInvoice = Object.values(p.invoiced || {}).some(Boolean);
-
-const invoiceMatch =
-  invoiceFilter === "All" ||
-  (invoiceFilter === "Invoiced" && hasInvoice) ||
-  (invoiceFilter === "Not Invoiced" && !hasInvoice);
-
-return monthMatch && yearMatch && invoiceMatch;
+    return monthYearMatch && invoiceMatch;
   });
 
   // 🔹 Sorting
