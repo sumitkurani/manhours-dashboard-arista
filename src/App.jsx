@@ -637,7 +637,13 @@ if (!user) {
               <div style={S.projectGrid}>
                 {displayedProjects.map(p => {
                   const isTask = p.trackBy === "tasks", count = isTask ? (p.tasks || []).length : p.employees.length, label = isTask ? "task" : "employee";
-                  const now = new Date(), cmk = `${now.getFullYear()}-${now.getMonth()}`, isInv = p.invoiced?.[cmk] || false;
+                  // Card reflects the active filter. If a filter is set to "All", fall back to today's month/year.
+                  const _now = new Date();
+                  const cardMonthIdx = filterMonth === "All" ? _now.getMonth() : MONTHS.indexOf(filterMonth);
+                  const cardYear = filterYear === "All" ? _now.getFullYear() : parseInt(filterYear);
+                  const cmk = `${cardYear}-${cardMonthIdx}`;
+                  const isInv = p.invoiced?.[cmk] || false;
+                  const cardMonthLabel = `${MONTHS[cardMonthIdx].slice(0,3)} ${cardYear}`;
                   return (
                     <div key={p.id} style={S.projectCard}>
                       <div style={S.cardHeader}>
@@ -654,7 +660,7 @@ if (!user) {
                       </div>
                       <div style={S.invoiceRow} onClick={(e) => { e.stopPropagation(); toggleInvoice(p.id, cmk); }}>
                         <div style={{ ...S.checkbox, ...(isInv ? S.checkboxChecked : {}) }}>{isInv && "\u2713"}</div>
-                        <span style={{ fontSize: 12, color: isInv ? "#2d6a4f" : "#999" }}>{isInv ? `Invoice created (${MONTHS[now.getMonth()].slice(0,3)})` : `No invoice (${MONTHS[now.getMonth()].slice(0,3)})`}</span>
+                        <span style={{ fontSize: 12, color: isInv ? "#2d6a4f" : "#999" }}>{isInv ? `Invoice created (${cardMonthLabel})` : `No invoice (${cardMonthLabel})`}</span>
                       </div>
                       <button style={S.cardBtn} onClick={() => { setActiveProjectId(p.id); setView("data"); }}>Open</button>
                     </div>
