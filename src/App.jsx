@@ -25,6 +25,22 @@ function generateId() { return Date.now().toString(36) + Math.random().toString(
 function saveData(key, data) { try { localStorage.setItem(key, JSON.stringify(data)); } catch (e) { console.error("Save failed:", e); } }
 function loadData(key) { try { const item = localStorage.getItem(key); return item ? JSON.parse(item) : null; } catch (e) { return null; } }
 
+// Per-month roster helpers: each month has its own snapshot of employees/tasks.
+// If a month doesn't yet have a snapshot, fall back to the project-level master list
+// (this preserves all pre-existing data without breaking anything).
+function getMonthEmployees(project, key) {
+  if (!project) return [];
+  const md = project.data?.[key];
+  if (md && Array.isArray(md.__employees)) return md.__employees;
+  return project.employees || [];
+}
+function getMonthTasks(project, key) {
+  if (!project) return [];
+  const md = project.data?.[key];
+  if (md && Array.isArray(md.__tasks)) return md.__tasks;
+  return project.tasks || [];
+}
+
 export default function ManhoursDashboard() {
   const [projects, setProjects] = useState([]);
   const updateProjects = (updater) => {
@@ -204,7 +220,8 @@ return monthMatch && yearMatch && invoiceMatch;
     updateProjects(prev => prev.map(p => {
       if (p.id !== activeProjectId) return p;
       const data = { ...p.data }; if (!data[key]) data[key] = {};
-      p.employees.forEach(emp => { if (!data[key][emp.id]) data[key][emp.id] = {}; for (let d = 1; d <= daysInMonth; d++) { if (isWeekend(selectedYear, selectedMonth, d)) data[key][emp.id][d] = "W"; } });
+      const roster = getMonthEmployees(p, key);
+      roster.forEach(emp => { if (!data[key][emp.id]) data[key][emp.id] = {}; for (let d = 1; d <= daysInMonth; d++) { if (isWeekend(selectedYear, selectedMonth, d)) data[key][emp.id][d] = "W"; } });
       return { ...p, data };
     }));
   };
@@ -216,24 +233,84 @@ return monthMatch && yearMatch && invoiceMatch;
     updateProjects(prev => prev.map(p => {
       if (p.id !== activeProjectId) return p;
       const prevData = p.data?.[prevKey]; if (!prevData) { alert("No data found for " + MONTHS[pm] + " " + py); return p; }
-      const data = { ...p.data }; data[currKey] = JSON.parse(JSON.stringify(prevData)); return { ...p, data };
+      const data = { ...p.data };
+      const copied = JSON.parse(JSON.stringify(prevData));
+      // Ensure the new month has its own roster snapshot (deep-cloned from previous month, or project default).
+      if (!Array.isArray(copied.__employees)) copied.__employees = [...((prevData.__employees) || p.employees || [])];
+      if (!Array.isArray(copied.__tasks)) copied.__tasks = [...((prevData.__tasks) || p.tasks || [])];
+      data[currKey] = copied;
+      return { ...p, data };
     }));
   };
 
-  const addEmployeeToProject = () => { if (!newItemName.trim()) return; const emp = { id: generateId(), name: newItemName.trim(), department: newItemDept }; updateProjects(prev => prev.map(p => p.id !== activeProjectId ? p : { ...p, employees: [...p.employees, emp] })); setNewItemName(""); };
-  const addTaskToProject = () => { if (!newItemName.trim()) return; const task = { id: generateId(), name: newItemName.trim() }; updateProjects(prev => prev.map(p => p.id !== activeProjectId ? p : { ...p, tasks: [...(p.tasks || []), task] })); setNewItemName(""); };
-  const removeEmployeeFromProject = (empId) => { updateProjects(prev => prev.map(p => p.id !== activeProjectId ? p : { ...p, employees: p.employees.filter(e => e.id !== empId) })); };
-  const removeTaskFromProject = (taskId) => { updateProjects(prev => prev.map(p => p.id !== activeProjectId ? p : { ...p, tasks: (p.tasks || []).filter(t => t.id !== taskId) })); };
+  // PER-MONTH ROSTER: Adding or removing employees/tasks only affects the currently selected month.
+  // First edit to a month "locks in" its roster (snapshots from project default if needed); other months remain untouched.
+  const addEmployeeToProject = () => {
+    if (!newItemName.trim()) return;
+    const emp = { id: generateId(), name: newItemName.trim(), department: newItemDept };
+    const key = `${selectedYear}-${selectedMonth}`;
+    updateProjects(prev => prev.map(p => {
+      if (p.id !== activeProjectId) return p;
+      const data = { ...(p.data || {}) };
+      const md = { ...(data[key] || {}) };
+      const currentRoster = Array.isArray(md.__employees) ? md.__employees : (p.employees || []);
+      md.__employees = [...currentRoster, emp];
+      data[key] = md;
+      return { ...p, data };
+    }));
+    setNewItemName("");
+  };
+  const addTaskToProject = () => {
+    if (!newItemName.trim()) return;
+    const task = { id: generateId(), name: newItemName.trim() };
+    const key = `${selectedYear}-${selectedMonth}`;
+    updateProjects(prev => prev.map(p => {
+      if (p.id !== activeProjectId) return p;
+      const data = { ...(p.data || {}) };
+      const md = { ...(data[key] || {}) };
+      const currentRoster = Array.isArray(md.__tasks) ? md.__tasks : (p.tasks || []);
+      md.__tasks = [...currentRoster, task];
+      data[key] = md;
+      return { ...p, data };
+    }));
+    setNewItemName("");
+  };
+  const removeEmployeeFromProject = (empId) => {
+    const key = `${selectedYear}-${selectedMonth}`;
+    updateProjects(prev => prev.map(p => {
+      if (p.id !== activeProjectId) return p;
+      const data = { ...(p.data || {}) };
+      const md = { ...(data[key] || {}) };
+      const currentRoster = Array.isArray(md.__employees) ? md.__employees : (p.employees || []);
+      md.__employees = currentRoster.filter(e => e.id !== empId);
+      data[key] = md;
+      return { ...p, data };
+    }));
+  };
+  const removeTaskFromProject = (taskId) => {
+    const key = `${selectedYear}-${selectedMonth}`;
+    updateProjects(prev => prev.map(p => {
+      if (p.id !== activeProjectId) return p;
+      const data = { ...(p.data || {}) };
+      const md = { ...(data[key] || {}) };
+      const currentRoster = Array.isArray(md.__tasks) ? md.__tasks : (p.tasks || []);
+      md.__tasks = currentRoster.filter(t => t.id !== taskId);
+      data[key] = md;
+      return { ...p, data };
+    }));
+  };
   const deleteProject = (id) => { updateProjects(prev => prev.filter(p => p.id !== id)); if (activeProjectId === id) { setActiveProjectId(null); setView("projects"); } };
 
   const exportCSV = () => {
     if (!activeProject) return;
     const key = `${selectedYear}-${selectedMonth}`, monthData = activeProject.data?.[key] || {}, invStatus = activeProject.invoiced?.[key] ? "Yes" : "No";
     let csv = ""; const ml = `${MONTHS[selectedMonth]} ${selectedYear}`, isTaskMode = activeProject.trackBy === "tasks";
+    const monthEmps = getMonthEmployees(activeProject, key);
+    const monthTasksList = getMonthTasks(activeProject, key);
     if (activeProject.type === "retainer") {
       csv += `Project: ${activeProject.name}\nType: Retainer\nMonth: ${ml}\nInvoice Created: ${invStatus}\n\n`;
       csv += `Employee,Department,${Array.from({ length: daysInMonth }, (_, i) => i + 1).join(",")},Present,Absent,Half Day,Leave,Week Off\n`;
-      activeProject.employees.forEach(emp => {
+      monthEmps.forEach(emp => {
         const ed = monthData[emp.id] || {}; let pC=0,aC=0,hC=0,lC=0,wC=0;
         const days = Array.from({ length: daysInMonth }, (_, i) => { const v = ed[i+1] || ""; if(v==="P")pC++;if(v==="A")aC++;if(v==="H")hC++;if(v==="L")lC++;if(v==="W")wC++; return v; });
         csv += `"${emp.name}","${emp.department}",${days.join(",")},${pC},${aC},${hC},${lC},${wC}\n`;
@@ -241,13 +318,13 @@ return monthMatch && yearMatch && invoiceMatch;
     } else if (isTaskMode) {
       csv += `Project: ${activeProject.name}\nType: Hourly (Task-based)\nMonth: ${ml}\nInvoice Created: ${invStatus}\n\n`;
       csv += `Task,Hours\n`;
-      (activeProject.tasks || []).forEach(t => { csv += `"${t.name}",${monthData[t.id] || 0}\n`; });
-      csv += `\nTotal Hours,${(activeProject.tasks || []).reduce((s, t) => s + (parseFloat(monthData[t.id]) || 0), 0)}\n`;
+      monthTasksList.forEach(t => { csv += `"${t.name}",${monthData[t.id] || 0}\n`; });
+      csv += `\nTotal Hours,${monthTasksList.reduce((s, t) => s + (parseFloat(monthData[t.id]) || 0), 0)}\n`;
     } else {
       csv += `Project: ${activeProject.name}\nType: Hourly\nMonth: ${ml}\nInvoice Created: ${invStatus}\n\n`;
       csv += `Employee,Department,Hours\n`;
-      activeProject.employees.forEach(emp => { csv += `"${emp.name}","${emp.department}",${monthData[emp.id] || 0}\n`; });
-      csv += `\nTotal Hours,,${activeProject.employees.reduce((s, e) => s + (parseFloat(monthData[e.id]) || 0), 0)}\n`;
+      monthEmps.forEach(emp => { csv += `"${emp.name}","${emp.department}",${monthData[emp.id] || 0}\n`; });
+      csv += `\nTotal Hours,,${monthEmps.reduce((s, e) => s + (parseFloat(monthData[e.id]) || 0), 0)}\n`;
     }
     const blob = new Blob([csv], { type: "text/csv" }), url = URL.createObjectURL(blob), a = document.createElement("a");
     a.href = url; a.download = `${activeProject.name.replace(/\s+/g, "_")}_${MONTHS[selectedMonth]}_${selectedYear}.csv`; a.click(); URL.revokeObjectURL(url);
@@ -257,18 +334,18 @@ return monthMatch && yearMatch && invoiceMatch;
     if (!activeProject) return {};
     const key = `${selectedYear}-${selectedMonth}`, md = activeProject.data?.[key] || {};
     let totalP=0,totalA=0,totalH=0,totalL=0,totalW=0;
-    (activeProject.employees || []).forEach(emp => { const d = md[emp.id] || {}; Object.values(d).forEach(v => { if(v==="P")totalP++;if(v==="A")totalA++;if(v==="H")totalH++;if(v==="L")totalL++;if(v==="W")totalW++; }); });
+    getMonthEmployees(activeProject, key).forEach(emp => { const d = md[emp.id] || {}; Object.values(d).forEach(v => { if(v==="P")totalP++;if(v==="A")totalA++;if(v==="H")totalH++;if(v==="L")totalL++;if(v==="W")totalW++; }); });
     return { totalP, totalA, totalH, totalL, totalW };
   };
 
   const getHourlySummary = () => {
     if (!activeProject) return 0;
     const key = `${selectedYear}-${selectedMonth}`, md = activeProject.data?.[key] || {};
-    const items = activeProject.trackBy === "tasks" ? (activeProject.tasks || []) : activeProject.employees;
+    const items = activeProject.trackBy === "tasks" ? getMonthTasks(activeProject, key) : getMonthEmployees(activeProject, key);
     return items.reduce((s, item) => s + (parseFloat(md[item.id]) || 0), 0);
   };
 
-  const getItemCount = () => { if (!activeProject) return 0; return activeProject.trackBy === "tasks" ? (activeProject.tasks || []).length : activeProject.employees.length; };
+  const getItemCount = () => { if (!activeProject) return 0; const key = `${selectedYear}-${selectedMonth}`; return activeProject.trackBy === "tasks" ? getMonthTasks(activeProject, key).length : getMonthEmployees(activeProject, key).length; };
 
 
   const monthKey = `${selectedYear}-${selectedMonth}`;
@@ -740,7 +817,7 @@ if (!user) {
                       <th style={S.th}>P</th><th style={S.th}>A</th><th style={S.th}>H</th><th style={S.th}>L</th><th style={S.th}>W</th>
                     </tr></thead>
                     <tbody>
-                      {activeProject.employees.map(emp => {
+                      {getMonthEmployees(activeProject, `${selectedYear}-${selectedMonth}`).map(emp => {
                         const key = `${selectedYear}-${selectedMonth}`, ed = activeProject.data?.[key]?.[emp.id] || {};
                         let pC=0,aC=0,hC=0,lC=0,wC=0;
                         Object.values(ed).forEach(v=>{if(v==="P")pC++;if(v==="A")aC++;if(v==="H")hC++;if(v==="L")lC++;if(v==="W")wC++;});
@@ -793,7 +870,7 @@ if (!user) {
                     <th style={{ ...S.th, width: 50 }}></th>
                   </tr></thead>
                   <tbody>
-                    {activeProject.employees.map((emp, idx) => {
+                    {getMonthEmployees(activeProject, `${selectedYear}-${selectedMonth}`).map((emp, idx) => {
                       const key = `${selectedYear}-${selectedMonth}`, hours = activeProject.data?.[key]?.[emp.id] || "";
                       return (
                         <tr key={emp.id} style={{ background: idx % 2 === 0 ? "#fff" : "#fafaf8" }}>
@@ -824,7 +901,7 @@ if (!user) {
                     <th style={{ ...S.th, width: 50 }}></th>
                   </tr></thead>
                   <tbody>
-                    {(activeProject.tasks || []).map((task, idx) => {
+                    {getMonthTasks(activeProject, `${selectedYear}-${selectedMonth}`).map((task, idx) => {
                       const key = `${selectedYear}-${selectedMonth}`, hours = activeProject.data?.[key]?.[task.id] || "";
                       return (
                         <tr key={task.id} style={{ background: idx % 2 === 0 ? "#fff" : "#fafaf8" }}>
